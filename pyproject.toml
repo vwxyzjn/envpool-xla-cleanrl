@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "envpool-xla-cleanrl"
+version = "0.1.0"
+description = ""
+authors = ["Costa Huang <costa.huang@outlook.com>"]
+
+[tool.poetry.dependencies]
+python = "~3.8"
+jax = "^0.3.14"
+flax = "^0.5.2"
+optax = "^0.1.2"
+envpool = {path = "envpool-0.6.2-cp38-cp38-linux_x86_64.whl"}
+tensorboardX = "^2.5.1"
+tensorboard = "^2.9.1"
+wandb = "^0.12.21"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
