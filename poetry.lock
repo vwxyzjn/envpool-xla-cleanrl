@@ -129,7 +129,7 @@ six = ">=1.4.0"
 
 [[package]]
 name = "envpool"
-version = "0.6.2"
+version = "0.6.2.post1"
 description = "\"C++-based high-performance parallel environment execution engine (vectorized env) for general RL environments.\""
 category = "main"
 optional = false
@@ -141,10 +141,6 @@ gym = ">=0.18"
 numpy = ">=1.19"
 types-protobuf = ">=3.17.3"
 typing-extensions = "*"
-
-[package.source]
-type = "file"
-url = "envpool-0.6.2-cp38-cp38-linux_x86_64.whl"
 
 [[package]]
 name = "etils"
@@ -939,7 +935,7 @@ testing = ["pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytest-
 [metadata]
 lock-version = "1.1"
 python-versions = "~3.8"
-content-hash = "50905a6f3cf0430f2d2ec4f2910f48501371c609c790c34208c706a0e9146a57"
+content-hash = "8fd048842c9a30609725c600b7c3d6b1ea75b6168de68d94e7a27f4c25eabd44"
 
 [metadata.files]
 absl-py = [
@@ -1014,9 +1010,7 @@ docker-pycreds = [
     {file = "docker-pycreds-0.4.0.tar.gz", hash = "sha256:6ce3270bcaf404cc4c3e27e4b6c70d3521deae82fb508767870fdbf772d584d4"},
     {file = "docker_pycreds-0.4.0-py2.py3-none-any.whl", hash = "sha256:7266112468627868005106ec19cd0d722702d2b7d5912a28e19b826c3d37af49"},
 ]
-envpool = [
-    {file = "envpool-0.6.2-cp38-cp38-linux_x86_64.whl", hash = "sha256:ac03fbc98c9667b203bcc5af019017cd201c2d1c8c7d9c54fd5aa3dac32c520e"},
-]
+envpool = []
 etils = [
     {file = "etils-0.6.0-py3-none-any.whl", hash = "sha256:e47b14402f2fc883c70a394e86b3236e4929cfd90187fba58d2f4d3eb2e07c05"},
     {file = "etils-0.6.0.tar.gz", hash = "sha256:6677241051835d0db11c4947bcad938f57b51ea102290624f892f1e4e51b70e5"},
