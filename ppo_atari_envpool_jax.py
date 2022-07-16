@@ -4,7 +4,6 @@ import argparse
 import os
 import random
 import time
-from collections import deque
 from distutils.util import strtobool
 from typing import Sequence
 
@@ -193,6 +192,17 @@ class AgentParams:
     critic_params: flax.core.FrozenDict
 
 
+@flax.struct.dataclass
+class Storage:
+    obs: jnp.array
+    actions: jnp.array
+    logprobs: jnp.array
+    dones: jnp.array
+    values: jnp.array
+    advantages: jnp.array
+    returns: jnp.array
+
+
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -255,42 +265,37 @@ if __name__ == "__main__":
         ),
         tx=optax.chain(
             optax.clip_by_global_norm(args.max_grad_norm),
-            optax.inject_hyperparams(optax.adam)(learning_rate=linear_schedule if args.anneal_lr else args.learning_rate, eps=1e-5),
+            optax.inject_hyperparams(optax.adam)(
+                learning_rate=linear_schedule if args.anneal_lr else args.learning_rate, eps=1e-5
+            ),
         ),
     )
     network.apply = jax.jit(network.apply)
     actor.apply = jax.jit(actor.apply)
     critic.apply = jax.jit(critic.apply)
-    # print(Network().tabulate(jax.random.PRNGKey(0), np.array([envs.single_observation_space.sample()])))
-    # print(Actor(action_dim=envs.single_action_space.n).tabulate(jax.random.PRNGKey(0), network.apply(network_params, np.array([envs.single_observation_space.sample()]))))
-    # print(Critic().tabulate(jax.random.PRNGKey(0), network.apply(network_params, np.array([envs.single_observation_space.sample()]))))
-    # raise
 
     # ALGO Logic: Storage setup
-    obs = jnp.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape)
-    actions = jnp.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape, dtype=jnp.int32)
-    logprobs = jnp.zeros((args.num_steps, args.num_envs))
+    storage = Storage(
+        obs=jnp.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape),
+        actions=jnp.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape, dtype=jnp.int32),
+        logprobs=jnp.zeros((args.num_steps, args.num_envs)),
+        dones=jnp.zeros((args.num_steps, args.num_envs)),
+        values=jnp.zeros((args.num_steps, args.num_envs)),
+        advantages=jnp.zeros((args.num_steps, args.num_envs)),
+        returns=jnp.zeros((args.num_steps, args.num_envs)),
+    )
     rewards = np.zeros((args.num_steps, args.num_envs))
-    dones = jnp.zeros((args.num_steps, args.num_envs))
-    values = jnp.zeros((args.num_steps, args.num_envs))
-    advantages = jnp.zeros((args.num_steps, args.num_envs))
 
     @jax.jit
     def get_action_and_value(
         agent_state: TrainState,
-        x: np.ndarray,
-        d: np.ndarray,
-        obs: np.ndarray,
-        dones: np.ndarray,
-        actions: np.ndarray,
-        logprobs: np.ndarray,
-        values: np.ndarray,
+        next_obs: np.ndarray,
+        next_done: np.ndarray,
+        storage: Storage,
         step: int,
         key: jax.random.PRNGKey,
     ):
-        obs = obs.at[step].set(x)  # inside jit() `x = x.at[idx].set(y)` is in-place.
-        dones = dones.at[step].set(d)
-        hidden = network.apply(agent_state.params.network_params, x)
+        hidden = network.apply(agent_state.params.network_params, next_obs)
         logits = actor.apply(agent_state.params.actor_params, hidden)
         # sample action: Gumbel-softmax trick
         # see https://stats.stackexchange.com/questions/359442/sampling-from-a-categorical-distribution
@@ -299,10 +304,14 @@ if __name__ == "__main__":
         action = jnp.argmax(logits - jnp.log(-jnp.log(u)), axis=1)
         logprob = jax.nn.log_softmax(logits)[jnp.arange(action.shape[0]), action]
         value = critic.apply(agent_state.params.critic_params, hidden)
-        actions = actions.at[step].set(action)
-        logprobs = logprobs.at[step].set(logprob)
-        values = values.at[step].set(value.squeeze())
-        return obs, dones, actions, logprobs, values, action, key
+        storage = storage.replace(
+            obs=storage.obs.at[step].set(next_obs),
+            dones=storage.dones.at[step].set(next_done),
+            actions=storage.actions.at[step].set(action),
+            logprobs=storage.logprobs.at[step].set(logprob),
+            values=storage.values.at[step].set(value.squeeze()),
+        )
+        return storage, action, key
 
     @jax.jit
     def get_action_and_value2(
@@ -326,11 +335,9 @@ if __name__ == "__main__":
         next_obs: np.ndarray,
         next_done: np.ndarray,
         rewards: np.ndarray,
-        dones: np.ndarray,
-        values: np.ndarray,
-        advantages: np.ndarray,
+        storage: Storage,
     ):
-        advantages = advantages.at[:].set(0.0)  # reset advantages
+        storage = storage.replace(advantages=storage.advantages.at[:].set(0.0))
         next_value = critic.apply(
             agent_state.params.critic_params, network.apply(agent_state.params.network_params, next_obs)
         ).squeeze()
@@ -340,30 +347,25 @@ if __name__ == "__main__":
                 nextnonterminal = 1.0 - next_done
                 nextvalues = next_value
             else:
-                nextnonterminal = 1.0 - dones[t + 1]
-                nextvalues = values[t + 1]
-            delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                nextnonterminal = 1.0 - storage.dones[t + 1]
+                nextvalues = storage.values[t + 1]
+            delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - storage.values[t]
             lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            advantages = advantages.at[t].set(lastgaelam)
-        returns = advantages + values
-        return jax.lax.stop_gradient(advantages), jax.lax.stop_gradient(returns)
+            storage = storage.replace(advantages=storage.advantages.at[t].set(lastgaelam))
+        storage = storage.replace(returns=storage.advantages + storage.values)
+        return storage
 
     @jax.jit
     def update_ppo(
         agent_state: TrainState,
-        obs: np.ndarray,
-        logprobs: np.ndarray,
-        actions: np.ndarray,
-        advantages: np.ndarray,
-        returns: np.ndarray,
-        values: np.ndarray,
+        storage: Storage,
         key: jax.random.PRNGKey,
     ):
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
+        b_obs = storage.obs.reshape((-1,) + envs.single_observation_space.shape)
+        b_logprobs = storage.logprobs.reshape(-1)
+        b_actions = storage.actions.reshape((-1,) + envs.single_action_space.shape)
+        b_advantages = storage.advantages.reshape(-1)
+        b_returns = storage.returns.reshape(-1)
 
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
@@ -415,9 +417,7 @@ if __name__ == "__main__":
     for update in range(1, args.num_updates + 1):
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs, dones, actions, logprobs, values, action, key = get_action_and_value(
-                agent_state, next_obs, next_done, obs, dones, actions, logprobs, values, step, key
-            )
+            storage, action, key = get_action_and_value(agent_state, next_obs, next_done, storage, step, key)
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards[step], next_done, info = envs.step(np.array(action))
@@ -427,25 +427,12 @@ if __name__ == "__main__":
                     writer.add_scalar("charts/episodic_return", info["r"][idx], global_step)
                     writer.add_scalar("charts/episodic_length", info["l"][idx], global_step)
 
-        advantages, returns = compute_gae(agent_state, next_obs, next_done, rewards, dones, values, advantages)
+        storage = compute_gae(agent_state, next_obs, next_done, rewards, storage)
         agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
             agent_state,
-            obs,
-            logprobs,
-            actions,
-            advantages,
-            returns,
-            values,
+            storage,
             key,
         )
-
-        # # DEBUG: print params
-        # print(agent_state.params.network_params["params"]["Conv_0"]["kernel"].sum())
-        # print(agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
-        # print(agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
-        # print("-------------------------------------------------------")
-        # if update == 4:
-        #     raise
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", agent_state.opt_state[1].hyperparams["learning_rate"].item(), global_step)
