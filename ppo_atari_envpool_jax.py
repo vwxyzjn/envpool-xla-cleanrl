@@ -93,13 +93,6 @@ class RecordEpisodeStatistics(gym.Wrapper):
         self.num_envs = getattr(env, "num_envs", 1)
         self.episode_returns = None
         self.episode_lengths = None
-        # get if the env has lives
-        self.has_lives = False
-        env.reset()
-        info = env.step(np.zeros(self.num_envs, dtype=int))[-1]
-        if info["lives"].sum() > 0:
-            self.has_lives = True
-            print("env has lives")
 
     def reset(self, **kwargs):
         observations = super().reset(**kwargs)
@@ -116,13 +109,8 @@ class RecordEpisodeStatistics(gym.Wrapper):
         self.episode_lengths += 1
         self.returned_episode_returns[:] = self.episode_returns
         self.returned_episode_lengths[:] = self.episode_lengths
-        all_lives_exhausted = infos["lives"] == 0
-        if self.has_lives:
-            self.episode_returns *= 1 - all_lives_exhausted
-            self.episode_lengths *= 1 - all_lives_exhausted
-        else:
-            self.episode_returns *= 1 - dones
-            self.episode_lengths *= 1 - dones
+        self.episode_returns *= 1 - infos["terminated"]
+        self.episode_lengths *= 1 - infos["terminated"]
         infos["r"] = self.returned_episode_returns
         infos["l"] = self.returned_episode_lengths
         return (
@@ -422,7 +410,7 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards[step], next_done, info = envs.step(np.array(action))
             for idx, d in enumerate(next_done):
-                if d and info["lives"][idx] == 0:
+                if d and info["terminated"][idx] == 1:
                     print(f"global_step={global_step}, episodic_return={info['r'][idx]}")
                     writer.add_scalar("charts/episodic_return", info["r"][idx], global_step)
                     writer.add_scalar("charts/episodic_length", info["l"][idx], global_step)

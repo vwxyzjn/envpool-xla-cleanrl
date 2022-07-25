@@ -206,11 +206,6 @@ if __name__ == "__main__":
     envs.single_action_space = envs.action_space
     envs.single_observation_space = envs.observation_space
     envs.is_vector_env = True
-    has_lives = False
-    info = envs.step(np.zeros(args.num_envs, dtype=int))[-1]
-    if info["lives"].sum() > 0:
-        has_lives = True
-        print("env has lives")
     episode_stats = EpisodeStatistics(
         episode_returns=jnp.zeros(args.num_envs, dtype=jnp.float32),
         episode_lengths=jnp.zeros(args.num_envs, dtype=jnp.int32),
@@ -223,29 +218,13 @@ if __name__ == "__main__":
         handle, (next_obs, reward, next_done, info) = step_env(handle, action)
         new_episode_return = episode_stats.episode_returns + info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
-        if has_lives:
-            # NOTE: some envs do not reset life counter immediately
-            # so we needed to multiply `next_done` to be sure
-            all_lives_exhausted = (info["lives"] == 0) * next_done
-            episode_stats = episode_stats.replace(
-                episode_returns=(episode_stats.episode_returns + info["reward"]) * (1 - all_lives_exhausted),
-                episode_lengths=(episode_stats.episode_lengths + 1) * (1 - all_lives_exhausted),
-                # only update the `returned_episode_returns` if the episode is done
-                returned_episode_returns=jnp.where(
-                    all_lives_exhausted, new_episode_return, episode_stats.returned_episode_returns
-                ),
-                returned_episode_lengths=jnp.where(
-                    all_lives_exhausted, new_episode_length, episode_stats.returned_episode_lengths
-                ),
-            )
-        else:
-            episode_stats = episode_stats.replace(
-                episode_returns=(episode_stats.episode_returns + info["reward"]) * (1 - next_done),
-                episode_lengths=(episode_stats.episode_lengths + 1) * (1 - next_done),
-                # only update the `returned_episode_returns` if the episode is done
-                returned_episode_returns=jnp.where(next_done, new_episode_return, episode_stats.returned_episode_returns),
-                returned_episode_lengths=jnp.where(next_done, new_episode_length, episode_stats.returned_episode_lengths),
-            )
+        episode_stats = episode_stats.replace(
+            episode_returns=(episode_stats.episode_returns + info["reward"]) * (1 - info["terminated"]),
+            episode_lengths=(episode_stats.episode_lengths + 1) * (1 - info["terminated"]),
+            # only update the `returned_episode_returns` if the episode is done
+            returned_episode_returns=jnp.where(info["terminated"], new_episode_return, episode_stats.returned_episode_returns),
+            returned_episode_lengths=jnp.where(info["terminated"], new_episode_length, episode_stats.returned_episode_lengths),
+        )
         return episode_stats, handle, (next_obs, reward, next_done, info)
 
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
@@ -440,7 +419,7 @@ if __name__ == "__main__":
         )
         avg_episodic_return = np.mean(episode_stats.returned_episode_returns)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
-        print(episode_stats)
+        # print(episode_stats)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
