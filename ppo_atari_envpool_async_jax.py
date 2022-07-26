@@ -89,52 +89,6 @@ def parse_args():
     return args
 
 
-class RecordEpisodeStatistics(gym.Wrapper):
-    def __init__(self, env, deque_size=100):
-        super().__init__(env)
-        self.num_envs = getattr(env, "num_envs", 1)
-        self.episode_returns = None
-        self.episode_lengths = None
-        # get if the env has lives
-        self.has_lives = False
-        env.reset()
-        info = env.step(np.zeros(self.num_envs, dtype=int))[-1]
-        if info["lives"].sum() > 0:
-            self.has_lives = True
-            print("env has lives")
-
-    def reset(self, **kwargs):
-        observations = super().reset(**kwargs)
-        self.episode_returns = np.zeros(self.num_envs, dtype=np.float32)
-        self.episode_lengths = np.zeros(self.num_envs, dtype=np.int32)
-        self.lives = np.zeros(self.num_envs, dtype=np.int32)
-        self.returned_episode_returns = np.zeros(self.num_envs, dtype=np.float32)
-        self.returned_episode_lengths = np.zeros(self.num_envs, dtype=np.int32)
-        return observations
-
-    def step(self, action):
-        observations, rewards, dones, infos = super().step(action)
-        self.episode_returns += infos["reward"]
-        self.episode_lengths += 1
-        self.returned_episode_returns[:] = self.episode_returns
-        self.returned_episode_lengths[:] = self.episode_lengths
-        all_lives_exhausted = infos["lives"] == 0
-        if self.has_lives:
-            self.episode_returns *= 1 - all_lives_exhausted
-            self.episode_lengths *= 1 - all_lives_exhausted
-        else:
-            self.episode_returns *= 1 - dones
-            self.episode_lengths *= 1 - dones
-        infos["r"] = self.returned_episode_returns
-        infos["l"] = self.returned_episode_lengths
-        return (
-            observations,
-            rewards,
-            dones,
-            infos,
-        )
-
-
 class Network(nn.Module):
     @nn.compact
     def __call__(self, x):
@@ -235,7 +189,6 @@ if __name__ == "__main__":
     envs.single_action_space = envs.action_space
     envs.single_observation_space = envs.observation_space
     envs.is_vector_env = True
-    # envs = RecordEpisodeStatistics(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     def linear_schedule(count):
@@ -395,6 +348,8 @@ if __name__ == "__main__":
     async_update = int((args.num_envs / args.async_batch_size))
 
     # put data in the last index
+    episode_returns = np.zeros((args.num_envs,), dtype=np.float32)
+    returned_episode_returns = np.zeros((args.num_envs,), dtype=np.float32)
     obs = []
     dones = []
     actions = []
@@ -411,9 +366,9 @@ if __name__ == "__main__":
         envs.send(np.array(action), env_id)
         obs.append(next_obs)
         dones.append(next_done)
+        values.append(value)
         actions.append(action)
         logprobs.append(logprob)
-        values.append(value)
         env_ids.append(env_id)
         rewards.append(next_reward)
 
@@ -439,6 +394,12 @@ if __name__ == "__main__":
             logprobs.append(logprob)
             env_ids.append(env_id)
             rewards.append(next_reward)
+            episode_returns[env_id] += next_reward
+            returned_episode_returns[env_id] = np.where(info["terminated"], episode_returns[env_id], returned_episode_returns[env_id])
+            episode_returns[env_id] *= (1 - info["terminated"])
+        avg_episodic_return = np.mean(returned_episode_returns)
+        print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
+        writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
         
         advantages, returns = compute_gae(rewards, values, dones, env_ids)
         agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
