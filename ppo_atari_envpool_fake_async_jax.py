@@ -89,6 +89,58 @@ def parse_args():
     return args
 
 
+class FakeAsyncEnvs:
+    def __init__(self, env_id, env_type, num_envs, batch_size, episodic_life, reward_clip, seed):
+        self.env_id = env_id
+        self.env_type = env_type
+        self.num_envs = num_envs
+        self.batch_size = batch_size
+        self.episodic_life = episodic_life
+        self.reward_clip = reward_clip
+        self.seed = seed
+        self.num_instances = int(num_envs / batch_size)
+
+        self.envs = [
+            envpool.make(
+                env_id,
+                env_type="gym",
+                num_envs=self.batch_size,
+                episodic_life=True,
+                reward_clip=True,
+                seed=self.seed + i,
+            ) for i in range(self.num_instances)
+        ]
+        self.action_space = self.envs[0].action_space
+        self.observation_space = self.envs[0].observation_space
+        self.env_ids = [np.arange(i*self.batch_size, (i+1)*self.batch_size) for i in range(self.num_instances)]
+
+
+    def async_reset(self):
+        self.obs = [env.reset() for env in self.envs]
+        self.rewards = [
+            np.zeros(self.batch_size) for _ in range(self.num_instances)
+        ]
+        self.dones = [
+            np.zeros(self.batch_size) for _ in range(self.num_instances)
+        ]
+        self.env_idx = 0
+
+    def send(self, action, env_id):
+        next_obs, reward, done, _ = self.envs[self.env_idx].step(action)
+        self.obs[self.env_idx] = next_obs
+        self.rewards[self.env_idx] = reward
+        self.dones[self.env_idx] = done
+        self.env_idx = (self.env_idx + 1) % self.num_instances
+        return
+
+    def recv(self):
+        return (
+            self.obs[self.env_idx],
+            self.rewards[self.env_idx],
+            self.dones[self.env_idx],
+            {"env_id": self.env_ids[self.env_idx]},
+        )
+
 class RecordEpisodeStatistics(gym.Wrapper):
     def __init__(self, env, deque_size=100):
         super().__init__(env)
@@ -222,7 +274,7 @@ if __name__ == "__main__":
     key, network_key, actor_key, critic_key = jax.random.split(key, 4)
 
     # env setup
-    envs = envpool.make(
+    envs = FakeAsyncEnvs(
         args.env_id,
         env_type="gym",
         num_envs=args.num_envs,
@@ -411,9 +463,9 @@ if __name__ == "__main__":
         envs.send(np.array(action), env_id)
         obs.append(next_obs)
         dones.append(next_done)
+        values.append(value)
         actions.append(action)
         logprobs.append(logprob)
-        values.append(value)
         env_ids.append(env_id)
         rewards.append(next_reward)
 
@@ -441,6 +493,8 @@ if __name__ == "__main__":
             rewards.append(next_reward)
         
         advantages, returns = compute_gae(rewards, values, dones, env_ids)
+        # if np.array(rewards).sum() > 1:
+        #     raise
         agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
             agent_state,
             obs,
