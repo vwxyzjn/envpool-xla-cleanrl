@@ -123,22 +123,25 @@ class FakeAsyncEnvs:
         self.dones = [
             np.zeros(self.batch_size) for _ in range(self.num_instances)
         ]
+        self.env_idxs = np.random.permutation(self.num_instances)
         self.env_idx = 0
 
     def send(self, action, env_id):
-        next_obs, reward, done, _ = self.envs[self.env_idx].step(action)
-        self.obs[self.env_idx] = next_obs
-        self.rewards[self.env_idx] = reward
-        self.dones[self.env_idx] = done
+        next_obs, reward, done, _ = self.envs[self.env_idxs[self.env_idx]].step(action)
+        self.obs[self.env_idxs[self.env_idx]] = next_obs
+        self.rewards[self.env_idxs[self.env_idx]] = reward
+        self.dones[self.env_idxs[self.env_idx]] = done
+        if self.env_idx + 1 == self.num_instances:
+            self.env_idxs = np.random.permutation(self.num_instances)
         self.env_idx = (self.env_idx + 1) % self.num_instances
         return
 
     def recv(self):
         return (
-            self.obs[self.env_idx],
-            self.rewards[self.env_idx],
-            self.dones[self.env_idx],
-            {"env_id": self.env_ids[self.env_idx], "terminated": self.dones[self.env_idx]},
+            self.obs[self.env_idxs[self.env_idx]],
+            self.rewards[self.env_idxs[self.env_idx]],
+            self.dones[self.env_idxs[self.env_idx]],
+            {"env_id": self.env_ids[self.env_idxs[self.env_idx]], "terminated": self.dones[self.env_idxs[self.env_idx]]},
         )
 
 
