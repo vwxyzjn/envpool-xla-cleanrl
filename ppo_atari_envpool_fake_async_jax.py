@@ -98,49 +98,50 @@ class FakeAsyncEnvs:
         self.episodic_life = episodic_life
         self.reward_clip = reward_clip
         self.seed = seed
-        self.num_instances = int(num_envs / batch_size)
+        self.num_batches = int(num_envs / batch_size)
 
         self.envs = [
             envpool.make(
                 env_id,
                 env_type="gym",
-                num_envs=self.batch_size,
+                num_envs=1,
                 episodic_life=True,
                 reward_clip=True,
                 seed=self.seed + i,
-            ) for i in range(self.num_instances)
+            ) for i in range(num_envs)
         ]
         self.action_space = self.envs[0].action_space
         self.observation_space = self.envs[0].observation_space
-        self.env_ids = [np.arange(i*self.batch_size, (i+1)*self.batch_size) for i in range(self.num_instances)]
+        self.original_idxs = np.arange(self.batch_size)
+        self.reverse_env_ids = np.zeros(self.batch_size, dtype=np.int32)
+        self.env_ids = np.arange(num_envs)
 
     def async_reset(self):
-        self.obs = [env.reset() for env in self.envs]
-        self.rewards = [
-            np.zeros(self.batch_size) for _ in range(self.num_instances)
-        ]
-        self.dones = [
-            np.zeros(self.batch_size) for _ in range(self.num_instances)
-        ]
-        self.env_idxs = np.random.permutation(self.num_instances)
-        self.env_idx = 0
+        self.obs = np.array([env.reset()[0] for env in self.envs]) # envpool specific
+        # self.obs = np.array([np.zeros((4, 84, 84)) + i for i in range(self.num_envs)])
+        self.rewards = np.zeros(self.num_envs)
+        self.dones = np.zeros(self.num_envs)
+        self.env_idxs = np.arange(self.num_envs) # np.random.permutation(self.num_envs) 
+        self.batch_idx = 0
 
     def send(self, action, env_id):
-        next_obs, reward, done, _ = self.envs[self.env_idxs[self.env_idx]].step(action)
-        self.obs[self.env_idxs[self.env_idx]] = next_obs
-        self.rewards[self.env_idxs[self.env_idx]] = reward
-        self.dones[self.env_idxs[self.env_idx]] = done
-        if self.env_idx + 1 == self.num_instances:
-            self.env_idxs = np.random.permutation(self.num_instances)
-        self.env_idx = (self.env_idx + 1) % self.num_instances
+        for idx, env_idx in enumerate(env_id):
+            next_obs, reward, done, _ = self.envs[env_idx].step(action[idx:idx+1])  # envpool specific
+            self.obs[env_idx] = next_obs[0]
+            self.rewards[env_idx] = reward[0]
+            self.dones[env_idx] = done[0]
+        if self.batch_idx + 1 == self.num_batches:
+            self.env_idxs = np.arange(self.num_envs) # np.random.permutation(self.num_envs) 
+        self.batch_idx = (self.batch_idx + 1) % self.num_batches
         return
 
     def recv(self):
+        batch_idxs = self.env_idxs[self.batch_idx*self.batch_size:(self.batch_idx+1)*self.batch_size]
         return (
-            self.obs[self.env_idxs[self.env_idx]],
-            self.rewards[self.env_idxs[self.env_idx]],
-            self.dones[self.env_idxs[self.env_idx]],
-            {"env_id": self.env_ids[self.env_idxs[self.env_idx]], "terminated": self.dones[self.env_idxs[self.env_idx]]},
+            self.obs[batch_idxs],
+            self.rewards[batch_idxs],
+            self.dones[batch_idxs],
+            {"env_id": self.env_ids[batch_idxs], "terminated": self.dones[batch_idxs]},
         )
 
 
@@ -470,9 +471,9 @@ if __name__ == "__main__":
             key,
         )
         # raise
-        print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
-        print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
-        print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
+        # print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
+        # print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
+        # print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
         writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
         writer.add_scalar("stats/returns", returns.mean().item(), global_step)
 
