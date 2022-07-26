@@ -114,7 +114,6 @@ class FakeAsyncEnvs:
         self.observation_space = self.envs[0].observation_space
         self.env_ids = [np.arange(i*self.batch_size, (i+1)*self.batch_size) for i in range(self.num_instances)]
 
-
     def async_reset(self):
         self.obs = [env.reset() for env in self.envs]
         self.rewards = [
