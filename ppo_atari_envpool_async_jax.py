@@ -252,7 +252,7 @@ if __name__ == "__main__":
         value = critic.apply(params.critic_params, hidden).squeeze()
         return logprob, entropy, value
 
-    take_idx_fn = jax.vmap(lambda x, idxs: x[idxs]) # TODO: check if this is correct
+    revert_idx_fn = jax.vmap(lambda src, target, idxs: target.at[idxs].set(src)) # TODO: docs to explain this
     @jax.jit
     def compute_gae(
         rewards: np.ndarray,
@@ -261,9 +261,13 @@ if __name__ == "__main__":
         env_ids: np.ndarray,
     ):
         env_ids = jnp.asarray(env_ids).reshape(args.num_steps + 1, -1)
-        rewards = take_idx_fn(jnp.asarray(rewards).reshape(args.num_steps + 1, -1), env_ids)[1:]  # NOTE: handle rewards off by 1 w/ [1:]
-        values = take_idx_fn(jnp.asarray(values).reshape(args.num_steps + 1, -1), env_ids)
-        dones = take_idx_fn(jnp.asarray(dones).reshape(args.num_steps + 1, -1), env_ids)
+        rewards = jnp.asarray(rewards).reshape(args.num_steps + 1, -1)
+        values = jnp.asarray(values).reshape(args.num_steps + 1, -1)
+        dones = jnp.asarray(dones).reshape(args.num_steps + 1, -1)
+
+        rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)
+        values = revert_idx_fn(values, jnp.zeros_like(values), env_ids)
+        dones = revert_idx_fn(dones, jnp.zeros_like(dones), env_ids)
 
         next_value = values[-1]
         next_done = dones[-1]
@@ -295,9 +299,12 @@ if __name__ == "__main__":
         key: jax.random.PRNGKey,
     ):
         env_ids = jnp.asarray(env_ids).reshape(args.num_steps + 1, -1)
-        b_obs = take_idx_fn(jnp.asarray(obs).reshape((args.num_steps + 1, -1,)+ envs.single_observation_space.shape), env_ids)[:-1].reshape((-1,) + envs.single_observation_space.shape)
-        b_logprobs = take_idx_fn(jnp.asarray(logprobs).reshape(args.num_steps + 1, -1), env_ids)[:-1].reshape(-1)
-        b_actions = take_idx_fn(jnp.asarray(actions).reshape(args.num_steps + 1, -1), env_ids)[:-1].reshape((-1,) + envs.single_action_space.shape)
+        obs = jnp.asarray(obs).reshape((args.num_steps + 1, -1,)+ envs.single_observation_space.shape)
+        logprobs =jnp.asarray(logprobs).reshape(args.num_steps + 1, -1)
+        actions = jnp.asarray(actions).reshape(args.num_steps + 1, -1)
+        b_obs = revert_idx_fn(obs, jnp.zeros_like(obs), env_ids)[:-1].reshape((-1,) + envs.single_observation_space.shape)
+        b_logprobs = revert_idx_fn(logprobs, jnp.zeros_like(logprobs), env_ids)[:-1].reshape(-1)
+        b_actions = revert_idx_fn(actions, jnp.zeros_like(actions), env_ids)[:-1].reshape((-1,) + envs.single_action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
 
@@ -400,7 +407,7 @@ if __name__ == "__main__":
         avg_episodic_return = np.mean(returned_episode_returns)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
         writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
-        
+
         advantages, returns = compute_gae(rewards, values, dones, env_ids)
         agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
             agent_state,
@@ -414,10 +421,10 @@ if __name__ == "__main__":
             env_ids,
             key,
         )
-        # raise
-        print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
-        print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
-        print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
+
+        # print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
+        # print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
+        # print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
         writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
         writer.add_scalar("stats/returns", returns.mean().item(), global_step)
 
