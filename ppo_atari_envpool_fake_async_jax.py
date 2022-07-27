@@ -98,50 +98,58 @@ class FakeAsyncEnvs:
         self.episodic_life = episodic_life
         self.reward_clip = reward_clip
         self.seed = seed
-        self.num_batches = int(num_envs / batch_size)
+        self.num_instances = int(num_envs / batch_size)
 
         self.envs = [
             envpool.make(
                 env_id,
                 env_type="gym",
-                num_envs=1,
+                num_envs=self.batch_size,
                 episodic_life=True,
                 reward_clip=True,
                 seed=self.seed + i,
-            ) for i in range(num_envs)
+            ) for i in range(self.num_instances)
         ]
         self.action_space = self.envs[0].action_space
         self.observation_space = self.envs[0].observation_space
-        self.original_idxs = np.arange(self.batch_size)
-        self.reverse_env_ids = np.zeros(self.batch_size, dtype=np.int32)
-        self.env_ids = np.arange(num_envs)
+        self.env_ids = [np.arange(i*self.batch_size, (i+1)*self.batch_size) for i in range(self.num_instances)]
+
 
     def async_reset(self):
-        self.obs = np.array([env.reset()[0] for env in self.envs]) # envpool specific
-        # self.obs = np.array([np.zeros((4, 84, 84)) + i for i in range(self.num_envs)])
-        self.rewards = np.zeros(self.num_envs)
-        self.dones = np.zeros(self.num_envs)
-        self.env_idxs = np.arange(self.num_envs) # np.random.permutation(self.num_envs) 
-        self.batch_idx = 0
+        self.obs = [env.reset() for env in self.envs]
+        self.rewards = [
+            np.zeros(self.batch_size) for _ in range(self.num_instances)
+        ]
+        self.dones = [
+            np.zeros(self.batch_size) for _ in range(self.num_instances)
+        ]
+        self.env_idxs = np.random.permutation(self.num_instances)
+        self.terminated = [
+            np.zeros(self.batch_size) for _ in range(self.num_instances)
+        ]
+        self.reported_rewards = [
+            np.zeros(self.batch_size) for _ in range(self.num_instances)
+        ]
+        self.env_idx = 0
 
     def send(self, action, env_id):
-        for idx, env_idx in enumerate(env_id):
-            next_obs, reward, done, _ = self.envs[env_idx].step(action[idx:idx+1])  # envpool specific
-            self.obs[env_idx] = next_obs[0]
-            self.rewards[env_idx] = reward[0]
-            self.dones[env_idx] = done[0]
-        if self.batch_idx + 1 == self.num_batches:
-            self.env_idxs = np.arange(self.num_envs) # np.random.permutation(self.num_envs) 
-        self.batch_idx = (self.batch_idx + 1) % self.num_batches
+        next_obs, reward, done, info = self.envs[self.env_idxs[self.env_idx]].step(action)
+        self.terminated[self.env_idxs[self.env_idx]] = info["terminated"]
+        self.reported_rewards[self.env_idxs[self.env_idx]] = info["reward"]
+        self.obs[self.env_idxs[self.env_idx]] = next_obs
+        self.rewards[self.env_idxs[self.env_idx]] = reward
+        self.dones[self.env_idxs[self.env_idx]] = done
+        if self.env_idx + 1 == self.num_instances:
+            self.env_idxs = np.random.permutation(self.num_instances)
+        self.env_idx = (self.env_idx + 1) % self.num_instances
         return
 
     def recv(self):
-        batch_idxs = self.env_idxs[self.batch_idx*self.batch_size:(self.batch_idx+1)*self.batch_size]
         return (
-            self.obs[batch_idxs],
-            self.rewards[batch_idxs],
-            self.dones[batch_idxs],
-            {"env_id": self.env_ids[batch_idxs], "terminated": self.dones[batch_idxs]},
+            self.obs[self.env_idxs[self.env_idx]],
+            self.rewards[self.env_idxs[self.env_idx]],
+            self.dones[self.env_idxs[self.env_idx]],
+            {"env_id": self.env_ids[self.env_idxs[self.env_idx]], "terminated": self.terminated[self.env_idxs[self.env_idx]], "reward": self.reported_rewards[self.env_idxs[self.env_idx]]},
         )
 
 
@@ -308,19 +316,13 @@ if __name__ == "__main__":
         value = critic.apply(params.critic_params, hidden).squeeze()
         return logprob, entropy, value
 
-    take_idx_fn = jax.vmap(lambda x, idxs: x[idxs]) # TODO: check if this is correct
+    revert_idx_fn = jax.vmap(lambda src, target, idxs: target.at[idxs].set(src)) # TODO: docs to explain this
     @jax.jit
     def compute_gae(
         rewards: np.ndarray,
         values: np.ndarray,
         dones: np.ndarray,
-        env_ids: np.ndarray,
     ):
-        env_ids = jnp.asarray(env_ids).reshape(args.num_steps + 1, -1)
-        rewards = take_idx_fn(jnp.asarray(rewards).reshape(args.num_steps + 1, -1), env_ids)[1:]  # NOTE: handle rewards off by 1 w/ [1:]
-        values = take_idx_fn(jnp.asarray(values).reshape(args.num_steps + 1, -1), env_ids)
-        dones = take_idx_fn(jnp.asarray(dones).reshape(args.num_steps + 1, -1), env_ids)
-
         next_value = values[-1]
         next_done = dones[-1]
         advantages = jnp.zeros((args.num_steps, args.num_envs))
@@ -341,19 +343,31 @@ if __name__ == "__main__":
     def update_ppo(
         agent_state: TrainState,
         obs,
-        actions,
-        logprobs,
         dones,
         values,
-        advantages,
-        returns,
+        actions,
+        logprobs,
         env_ids,
+        rewards,
         key: jax.random.PRNGKey,
     ):
         env_ids = jnp.asarray(env_ids).reshape(args.num_steps + 1, -1)
-        b_obs = take_idx_fn(jnp.asarray(obs).reshape((args.num_steps + 1, -1,)+ envs.single_observation_space.shape), env_ids)[:-1].reshape((-1,) + envs.single_observation_space.shape)
-        b_logprobs = take_idx_fn(jnp.asarray(logprobs).reshape(args.num_steps + 1, -1), env_ids)[:-1].reshape(-1)
-        b_actions = take_idx_fn(jnp.asarray(actions).reshape(args.num_steps + 1, -1), env_ids)[:-1].reshape((-1,) + envs.single_action_space.shape)
+        obs = jnp.asarray(obs).reshape((args.num_steps + 1, -1,)+ envs.single_observation_space.shape)
+        dones = jnp.asarray(dones).reshape(args.num_steps + 1, -1)
+        values = jnp.asarray(values).reshape(args.num_steps + 1, -1)
+        actions = jnp.asarray(actions).reshape(args.num_steps + 1, -1)
+        logprobs =jnp.asarray(logprobs).reshape(args.num_steps + 1, -1)
+        rewards = jnp.asarray(rewards).reshape(args.num_steps + 1, -1)
+        
+
+        rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)
+        values = revert_idx_fn(values, jnp.zeros_like(values), env_ids)
+        dones = revert_idx_fn(dones, jnp.zeros_like(dones), env_ids)
+        advantages, returns = compute_gae(rewards, values, dones)
+
+        b_obs = revert_idx_fn(obs, jnp.zeros_like(obs), env_ids)[:-1].reshape((-1,) + envs.single_observation_space.shape)
+        b_logprobs = revert_idx_fn(logprobs, jnp.zeros_like(logprobs), env_ids)[:-1].reshape(-1)
+        b_actions = revert_idx_fn(actions, jnp.zeros_like(actions), env_ids)[:-1].reshape((-1,) + envs.single_action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
 
@@ -429,14 +443,22 @@ if __name__ == "__main__":
         rewards.append(next_reward)
 
     for update in range(1, args.num_updates + 2):
-        # roll over data from last rollout phase
+        # roll over data from last rollout phase.
         obs = obs[-async_update:]
         dones = dones[-async_update:]
         actions = actions[-async_update:]
-        logprobs = logprobs[-async_update:]
-        values = values[-async_update:]
+        logprobs = []
+        values = []
+        # NOTE: This is a major difference from the synced version:
+        # this script cannot re-sample actions based on the last observation in the last rollout phase
+        # because the actions were already sampled in the last rollout phase per envpool's async API,
+        # so we can only update the logprobs and values based on the updated policy.
+        for o, a in zip(obs, actions):
+            l, _, v = get_action_and_value2(agent_state.params, o, a)
+            logprobs.append(l)
+            values.append(v)
         env_ids = env_ids[-async_update:]
-        rewards = rewards[-async_update:] # TODO: fix rewards off by one
+        rewards = rewards[-async_update:]
         for step in range(async_update, (args.num_steps + 1) * async_update): # num_steps + 1 to get the states for value bootstrapping.
             next_obs, next_reward, next_done, info = envs.recv()
             global_step += len(next_done)
@@ -450,32 +472,31 @@ if __name__ == "__main__":
             logprobs.append(logprob)
             env_ids.append(env_id)
             rewards.append(next_reward)
-            episode_returns[env_id] += next_reward
+            episode_returns[env_id] += info["reward"]
             returned_episode_returns[env_id] = np.where(info["terminated"], episode_returns[env_id], returned_episode_returns[env_id])
             episode_returns[env_id] *= (1 - info["terminated"])
         avg_episodic_return = np.mean(returned_episode_returns)
+        print(avg_episodic_return)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
         writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
-        
-        advantages, returns = compute_gae(rewards, values, dones, env_ids)
+
         agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
             agent_state,
             obs,
-            actions,
-            logprobs,
             dones,
             values,
-            advantages,
-            returns,
+            actions,
+            logprobs,
             env_ids,
+            rewards,
             key,
         )
-        # raise
+
         # print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
         # print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
         # print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
-        writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
-        writer.add_scalar("stats/returns", returns.mean().item(), global_step)
+        # writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
+        # writer.add_scalar("stats/returns", returns.mean().item(), global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", agent_state.opt_state[1].hyperparams["learning_rate"].item(), global_step)
@@ -488,6 +509,7 @@ if __name__ == "__main__":
         writer.add_scalar("losses/loss", loss.item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
 
     envs.close()
     writer.close()
