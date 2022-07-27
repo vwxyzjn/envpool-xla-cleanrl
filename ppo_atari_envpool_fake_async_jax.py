@@ -45,7 +45,7 @@ def parse_args():
         help="weather to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="Pong-v5",
+    parser.add_argument("--env-id", type=str, default="Breakout-v5",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=10000000,
         help="total timesteps of the experiments")
@@ -98,58 +98,52 @@ class FakeAsyncEnvs:
         self.episodic_life = episodic_life
         self.reward_clip = reward_clip
         self.seed = seed
-        self.num_instances = int(num_envs / batch_size)
+        self.num_batches = int(num_envs / batch_size)
 
         self.envs = [
             envpool.make(
                 env_id,
                 env_type="gym",
-                num_envs=self.batch_size,
+                num_envs=1,
                 episodic_life=True,
                 reward_clip=True,
                 seed=self.seed + i,
-            ) for i in range(self.num_instances)
+            ) for i in range(num_envs)
         ]
         self.action_space = self.envs[0].action_space
         self.observation_space = self.envs[0].observation_space
-        self.env_ids = [np.arange(i*self.batch_size, (i+1)*self.batch_size) for i in range(self.num_instances)]
-
+        self.env_ids = np.arange(num_envs)
+        self.num_dones = 0
 
     def async_reset(self):
-        self.obs = [env.reset() for env in self.envs]
-        self.rewards = [
-            np.zeros(self.batch_size) for _ in range(self.num_instances)
-        ]
-        self.dones = [
-            np.zeros(self.batch_size) for _ in range(self.num_instances)
-        ]
-        self.env_idxs = np.random.permutation(self.num_instances)
-        self.terminated = [
-            np.zeros(self.batch_size) for _ in range(self.num_instances)
-        ]
-        self.reported_rewards = [
-            np.zeros(self.batch_size) for _ in range(self.num_instances)
-        ]
-        self.env_idx = 0
+        self.obs = np.array([env.reset()[0] for env in self.envs]) # envpool specific
+        self.rewards = np.zeros(self.num_envs)
+        self.dones = np.zeros(self.num_envs)
+        self.terminated = np.zeros(self.num_envs)
+        self.reported_rewards = np.zeros(self.num_envs)
+        self.env_idxs = np.random.permutation(self.num_envs)
+        self.batch_idx = 0
 
     def send(self, action, env_id):
-        next_obs, reward, done, info = self.envs[self.env_idxs[self.env_idx]].step(action)
-        self.terminated[self.env_idxs[self.env_idx]] = info["terminated"]
-        self.reported_rewards[self.env_idxs[self.env_idx]] = info["reward"]
-        self.obs[self.env_idxs[self.env_idx]] = next_obs
-        self.rewards[self.env_idxs[self.env_idx]] = reward
-        self.dones[self.env_idxs[self.env_idx]] = done
-        if self.env_idx + 1 == self.num_instances:
-            self.env_idxs = np.random.permutation(self.num_instances)
-        self.env_idx = (self.env_idx + 1) % self.num_instances
+        for idx, env_idx in enumerate(env_id):
+            next_obs, reward, done, info = self.envs[env_idx].step(action[idx:idx+1])  # envpool specific
+            self.obs[env_idx] = next_obs
+            self.rewards[env_idx] = reward
+            self.dones[env_idx] = done
+            self.terminated[env_idx] = info["terminated"][0]
+            self.reported_rewards[env_idx] = info["reward"][0]
+        if self.batch_idx + 1 == self.num_batches:
+            self.env_idxs = np.random.permutation(self.num_envs)
+        self.batch_idx = (self.batch_idx + 1) % self.num_batches
         return
 
     def recv(self):
+        batch_idxs = self.env_idxs[self.batch_idx*self.batch_size:(self.batch_idx+1)*self.batch_size]
         return (
-            self.obs[self.env_idxs[self.env_idx]],
-            self.rewards[self.env_idxs[self.env_idx]],
-            self.dones[self.env_idxs[self.env_idx]],
-            {"env_id": self.env_ids[self.env_idxs[self.env_idx]], "terminated": self.terminated[self.env_idxs[self.env_idx]], "reward": self.reported_rewards[self.env_idxs[self.env_idx]]},
+            self.obs[batch_idxs],
+            self.rewards[batch_idxs],
+            self.dones[batch_idxs],
+            {"env_id": self.env_ids[batch_idxs], "terminated": self.terminated[batch_idxs], "reward": self.reported_rewards[batch_idxs]},
         )
 
 
@@ -358,7 +352,7 @@ if __name__ == "__main__":
         actions = jnp.asarray(actions).reshape(args.num_steps + 1, -1)
         logprobs =jnp.asarray(logprobs).reshape(args.num_steps + 1, -1)
         rewards = jnp.asarray(rewards).reshape(args.num_steps + 1, -1)
-        
+
 
         rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)
         values = revert_idx_fn(values, jnp.zeros_like(values), env_ids)
@@ -476,7 +470,7 @@ if __name__ == "__main__":
             returned_episode_returns[env_id] = np.where(info["terminated"], episode_returns[env_id], returned_episode_returns[env_id])
             episode_returns[env_id] *= (1 - info["terminated"])
         avg_episodic_return = np.mean(returned_episode_returns)
-        print(avg_episodic_return)
+        print(returned_episode_returns)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
         writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
 
