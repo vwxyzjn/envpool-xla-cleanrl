@@ -22,6 +22,13 @@ import optax
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from tensorboardX import SummaryWriter
+from stable_baselines3.common.atari_wrappers import (  # isort:skip
+    ClipRewardEnv,
+    EpisodicLifeEnv,
+    FireResetEnv,
+    MaxAndSkipEnv,
+    NoopResetEnv,
+)
 
 
 def parse_args():
@@ -45,7 +52,7 @@ def parse_args():
         help="weather to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="Breakout-v5",
+    parser.add_argument("--env-id", type=str, default="BreakoutNoFrameskip-v4",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=10000000,
         help="total timesteps of the experiments")
@@ -87,6 +94,94 @@ def parse_args():
     args.num_updates = args.total_timesteps // args.batch_size
     # fmt: on
     return args
+
+
+def make_env(env_id, seed, idx, capture_video, run_name):
+    def thunk():
+        env = gym.make(env_id)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        if capture_video:
+            if idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        env = NoopResetEnv(env, noop_max=30)
+        env = MaxAndSkipEnv(env, skip=4)
+        env = EpisodicLifeEnv(env)
+        if "FIRE" in env.unwrapped.get_action_meanings():
+            env = FireResetEnv(env)
+        env = ClipRewardEnv(env)
+        env = gym.wrappers.ResizeObservation(env, (84, 84))
+        env = gym.wrappers.GrayScaleObservation(env)
+        env = gym.wrappers.FrameStack(env, 4)
+        env.seed(seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        return env
+
+    return thunk
+
+
+class FakeAsyncEnvs:
+    def __init__(self, env_id, env_type, num_envs, batch_size, episodic_life, reward_clip, seed):
+        self.env_id = env_id
+        self.env_type = env_type
+        self.num_envs = num_envs
+        self.batch_size = batch_size
+        self.episodic_life = episodic_life
+        self.reward_clip = reward_clip
+        self.seed = seed
+        self.num_batches = int(num_envs / batch_size)
+
+        self.envs = [
+            make_env(self.env_id, self.seed + i, i, False, "")() for i in range(num_envs)
+        ]
+        self.action_space = self.envs[0].action_space
+        self.observation_space = self.envs[0].observation_space
+        self.env_ids = np.arange(num_envs)
+        self.num_dones = 0
+
+    def async_reset(self):
+        self.obs = np.array([env.reset() for env in self.envs]) # gym specific
+        self.rewards = np.zeros(self.num_envs)
+        self.dones = np.zeros(self.num_envs)
+        self.terminated = np.zeros(self.num_envs)
+        self.reported_rewards = np.zeros(self.num_envs)
+        self.last_reported_rewards = np.zeros(self.num_envs)
+        if True:
+            self.env_idxs = np.random.permutation(self.num_envs)
+        else:
+            self.env_idxs = np.arange(self.num_envs)
+        self.batch_idx = 0
+
+    def send(self, action, env_id):
+        for idx, env_idx in enumerate(env_id):
+            next_obs, reward, done, gym_info = self.envs[env_idx].step(action[idx]) # gym specific
+            if done:
+                next_obs = self.envs[env_idx].reset()
+            self.obs[env_idx] = next_obs
+            self.rewards[env_idx] = reward
+            self.dones[env_idx] = done
+            self.terminated[env_idx] = "episode" in gym_info
+            if "episode" in gym_info:
+                self.reported_rewards[env_idx] = gym_info["episode"]["r"] - self.last_reported_rewards[env_idx]
+            else:
+                self.reported_rewards[env_idx] = self.envs[env_idx].episode_returns[0] - self.last_reported_rewards[env_idx]
+            self.last_reported_rewards[env_idx] = self.envs[env_idx].episode_returns[0]
+        if self.batch_idx + 1 == self.num_batches:
+            if True:
+                self.env_idxs = np.random.permutation(self.num_envs)
+            else:
+                self.env_idxs = np.arange(self.num_envs)
+        self.batch_idx = (self.batch_idx + 1) % self.num_batches
+        return
+
+    def recv(self):
+        batch_idxs = self.env_idxs[self.batch_idx*self.batch_size:(self.batch_idx+1)*self.batch_size]
+        return (
+            self.obs[batch_idxs],
+            self.rewards[batch_idxs],
+            self.dones[batch_idxs],
+            {"env_id": self.env_ids[batch_idxs], "terminated": self.terminated[batch_idxs], "reward": self.reported_rewards[batch_idxs]},
+        )
 
 
 class Network(nn.Module):
@@ -176,7 +271,7 @@ if __name__ == "__main__":
     key, network_key, actor_key, critic_key = jax.random.split(key, 4)
 
     # env setup
-    envs = envpool.make(
+    envs = FakeAsyncEnvs(
         args.env_id,
         env_type="gym",
         num_envs=args.num_envs,
