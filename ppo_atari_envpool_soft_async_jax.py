@@ -426,6 +426,7 @@ if __name__ == "__main__":
         rewards.append(next_reward)
 
     for update in range(1, args.num_updates + 2):
+        update_time_start = time.time()
         # roll over data from last rollout phase.
         obs = obs[-async_update:]
         dones = dones[-async_update:]
@@ -492,6 +493,7 @@ if __name__ == "__main__":
         writer.add_scalar("losses/loss", loss.item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        writer.add_scalar("charts/SPS_update", int(args.num_envs * args.num_steps / (time.time() - update_time_start)), global_step)
 
 
     envs.close()

@@ -219,8 +219,8 @@ if __name__ == "__main__":
         new_episode_return = episode_stats.episode_returns + info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
         episode_stats = episode_stats.replace(
-            episode_returns=(episode_stats.episode_returns + info["reward"]) * (1 - info["terminated"]),
-            episode_lengths=(episode_stats.episode_lengths + 1) * (1 - info["terminated"]),
+            episode_returns=(new_episode_return) * (1 - info["terminated"]),
+            episode_lengths=(new_episode_length) * (1 - info["terminated"]),
             # only update the `returned_episode_returns` if the episode is done
             returned_episode_returns=jnp.where(info["terminated"], new_episode_return, episode_stats.returned_episode_returns),
             returned_episode_lengths=jnp.where(info["terminated"], new_episode_length, episode_stats.returned_episode_lengths),
@@ -408,6 +408,7 @@ if __name__ == "__main__":
         return agent_state, episode_stats, next_obs, next_done, storage, key, handle, global_step
 
     for update in range(1, args.num_updates + 1):
+        update_time_start = time.time()
         agent_state, episode_stats, next_obs, next_done, storage, key, handle, global_step = rollout(
             agent_state, episode_stats, next_obs, next_done, storage, key, handle, global_step
         )
@@ -434,6 +435,7 @@ if __name__ == "__main__":
         writer.add_scalar("losses/loss", loss.item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        writer.add_scalar("charts/SPS_update", int(args.num_envs * args.num_steps / (time.time() - update_time_start)), global_step)
 
     envs.close()
     writer.close()
