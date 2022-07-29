@@ -7,6 +7,57 @@ optional = false
 python-versions = ">=3.6"
 
 [[package]]
+name = "ale-py"
+version = "0.7.5"
+description = "The Arcade Learning Environment (ALE) - a platform for AI research."
+category = "main"
+optional = true
+python-versions = ">=3.7"
+
+[package.dependencies]
+importlib-metadata = {version = ">=4.10.0", markers = "python_version < \"3.10\""}
+importlib-resources = "*"
+numpy = "*"
+
+[package.extras]
+test = ["pytest (>=7.0)", "gym (>=0.23,<1.0)"]
+
+[[package]]
+name = "autorom"
+version = "0.4.2"
+description = "Automated installation of Atari ROMs for Gym/ALE-Py"
+category = "main"
+optional = true
+python-versions = ">=3.6"
+
+[package.dependencies]
+"AutoROM.accept-rom-license" = {version = "*", optional = true, markers = "extra == \"accept-rom-license\""}
+click = "*"
+importlib-resources = {version = "*", markers = "python_version < \"3.9\""}
+requests = "*"
+tqdm = "*"
+
+[package.extras]
+accept-rom-license = ["autorom.accept-rom-license"]
+
+[[package]]
+name = "autorom.accept-rom-license"
+version = "0.4.2"
+description = "Automated installation of Atari ROMs for Gym/ALE-Py"
+category = "main"
+optional = true
+python-versions = ">=3.6"
+
+[package.dependencies]
+click = "*"
+importlib-resources = {version = "*", markers = "python_version < \"3.9\""}
+requests = "*"
+tqdm = "*"
+
+[package.extras]
+tests = ["ale-py", "multi-agent-ale-py"]
+
+[[package]]
 name = "cachetools"
 version = "5.2.0"
 description = "Extensible memoizing collections and decorators"
@@ -145,6 +196,21 @@ python-versions = "*"
 six = ">=1.4.0"
 
 [[package]]
+name = "envpool"
+version = "0.6.3"
+description = "\"C++-based high-performance parallel environment execution engine (vectorized env) for general RL environments.\""
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+dm-env = ">=1.4"
+gym = ">=0.18"
+numpy = ">=1.19"
+types-protobuf = ">=3.17.3"
+typing-extensions = "*"
+
+[[package]]
 name = "etils"
 version = "0.6.0"
 description = "Collection of common python utils"
@@ -188,7 +254,7 @@ testing = ["covdefaults (>=1.2.0)", "coverage (>=4)", "pytest (>=4)", "pytest-co
 
 [[package]]
 name = "flax"
-version = "0.5.2"
+version = "0.5.3"
 description = "Flax: A neural network library for JAX designed for flexibility"
 category = "main"
 optional = false
@@ -202,6 +268,7 @@ numpy = ">=1.12"
 optax = "*"
 PyYAML = ">=5.4.1"
 rich = ">=11.1,<12.0"
+tensorstore = "*"
 typing-extensions = ">=4.1.1"
 
 [package.extras]
@@ -900,6 +967,17 @@ numpy = "*"
 protobuf = ">=3.8.0,<=3.20.1"
 
 [[package]]
+name = "tensorstore"
+version = "0.1.21"
+description = "Read and write large, multi-dimensional arrays"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+numpy = ">=1.16.0"
+
+[[package]]
 name = "toml"
 version = "0.10.2"
 description = "Python Library for Tom's Obvious, Minimal Language"
@@ -924,6 +1002,31 @@ optional = false
 python-versions = ">=3.5"
 
 [[package]]
+name = "tqdm"
+version = "4.64.0"
+description = "Fast, Extensible Progress Meter"
+category = "main"
+optional = true
+python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,>=2.7"
+
+[package.dependencies]
+colorama = {version = "*", markers = "platform_system == \"Windows\""}
+
+[package.extras]
+dev = ["py-make (>=0.1.0)", "twine", "wheel"]
+notebook = ["ipywidgets (>=6)"]
+slack = ["slack-sdk"]
+telegram = ["requests"]
+
+[[package]]
+name = "types-protobuf"
+version = "3.19.22"
+description = "Typing stubs for protobuf"
+category = "main"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "typing-extensions"
 version = "4.3.0"
 description = "Backported and Experimental Type Hints for Python 3.7+"
@@ -933,7 +1036,7 @@ python-versions = ">=3.7"
 
 [[package]]
 name = "urllib3"
-version = "1.26.10"
+version = "1.26.11"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
 category = "main"
 optional = false
@@ -946,22 +1049,21 @@ socks = ["PySocks (>=1.5.6,!=1.5.7,<2.0)"]
 
 [[package]]
 name = "virtualenv"
-version = "20.15.1"
+version = "20.16.0"
 description = "Virtual Python Environment builder"
 category = "dev"
 optional = false
-python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,>=2.7"
+python-versions = ">=3.6"
 
 [package.dependencies]
 distlib = ">=0.3.1,<1"
 filelock = ">=3.2,<4"
 importlib-metadata = {version = ">=0.12", markers = "python_version < \"3.8\""}
 platformdirs = ">=2,<3"
-six = ">=1.9.0,<2"
 
 [package.extras]
 docs = ["proselint (>=0.10.2)", "sphinx (>=3)", "sphinx-argparse (>=0.2.5)", "sphinx-rtd-theme (>=0.4.3)", "towncrier (>=21.3)"]
-testing = ["coverage (>=4)", "coverage-enable-subprocess (>=1)", "flaky (>=3)", "pytest (>=4)", "pytest-env (>=0.6.2)", "pytest-freezegun (>=0.4.1)", "pytest-mock (>=2)", "pytest-randomly (>=1)", "pytest-timeout (>=1)", "packaging (>=20.0)"]
+testing = ["coverage (>=4)", "coverage-enable-subprocess (>=1)", "flaky (>=3)", "packaging (>=20.0)", "pytest (>=4)", "pytest-env (>=0.6.2)", "pytest-freezegun (>=0.4.1)", "pytest-mock (>=2)", "pytest-randomly (>=1)", "pytest-timeout (>=1)"]
 
 [[package]]
 name = "wandb"
@@ -1023,15 +1125,42 @@ python-versions = ">=3.7"
 docs = ["sphinx", "jaraco.packaging (>=9)", "rst.linker (>=1.9)", "jaraco.tidelift (>=1.4)"]
 testing = ["pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytest-cov", "pytest-enabler (>=1.3)", "jaraco.itertools", "func-timeout", "pytest-black (>=0.3.7)", "pytest-mypy (>=0.9.1)"]
 
+[extras]
+atari = ["ale-py", "AutoROM"]
+
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.7.1,<3.10"
-content-hash = "8999319e5802e22dcd4d0142754c5272e1712db7389846aa29bd531b555577c8"
+content-hash = "c5ea90b97b23d5bdbb392c7a5e82cb328a666bf8832371265ad732a51fd04a16"
 
 [metadata.files]
 absl-py = [
     {file = "absl-py-1.2.0.tar.gz", hash = "sha256:f568809938c49abbda89826223c992b630afd23c638160ad7840cfe347710d97"},
     {file = "absl_py-1.2.0-py3-none-any.whl", hash = "sha256:5d15f85b8cc859c6245bc9886ba664460ed96a6fee895416caa37d669ee74a9a"},
+]
+ale-py = [
+    {file = "ale_py-0.7.5-cp310-cp310-macosx_10_15_x86_64.whl", hash = "sha256:c68d3960f0e14738362069798ff5baa85ecb337038168cb61bd4855125deb894"},
+    {file = "ale_py-0.7.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:003725a8b6f02353066564ab417f4228adc886434aa4c8d314489a7f79fe9dfd"},
+    {file = "ale_py-0.7.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1a30270d4aec820527be7a643aad381d0d1c932dc476740f63cc649dd200e065"},
+    {file = "ale_py-0.7.5-cp310-cp310-win_amd64.whl", hash = "sha256:1a72f8a311887fe3800964976c7ce3567dd701e7d9b77209d3a05c5cdf9c6af0"},
+    {file = "ale_py-0.7.5-cp37-cp37m-macosx_10_15_x86_64.whl", hash = "sha256:910c5443a836bf0bc6b03c45fefeeb9096254f807d24e247753e214062c12cae"},
+    {file = "ale_py-0.7.5-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1f97301b89a8b49b9d2cc034f8a7df55eb6b1930126fb6cb6c6d6239bab8a89d"},
+    {file = "ale_py-0.7.5-cp37-cp37m-win_amd64.whl", hash = "sha256:38e9f6c2b1cca246253f41028b8ad92d725beec8d4672c0fe247a217a4c7dc4f"},
+    {file = "ale_py-0.7.5-cp38-cp38-macosx_10_15_x86_64.whl", hash = "sha256:48c5abf2c59bed0b46f17ac60ec6c940e6e7d4abc6ff7e5296246286f80e4a23"},
+    {file = "ale_py-0.7.5-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:b2680b9a3c577865572dd9b8f24303189bb22c67b1b9668dcad3c20f59285e78"},
+    {file = "ale_py-0.7.5-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:dec87873c6fe65c71129e20c52ce35dd4507ca409fa1233f4ae9c511144a9c99"},
+    {file = "ale_py-0.7.5-cp38-cp38-win_amd64.whl", hash = "sha256:1f8694a091e13be45c8704a089462b1519f7112a85e1c1b61c842c69a2608a98"},
+    {file = "ale_py-0.7.5-cp39-cp39-macosx_10_15_x86_64.whl", hash = "sha256:4c7e7fed3ce2b305d2db9ca2f87106e3df6da2c4fc2363103782ffd5975b4549"},
+    {file = "ale_py-0.7.5-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:da5be311285a00e587b886805ea56762d44bf4f1da672229c1fbaff209bfcdc2"},
+    {file = "ale_py-0.7.5-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e513799fbb5128fa045cfb9a31cffa7f7c188dbe885665188b6c4cb50e9d983c"},
+    {file = "ale_py-0.7.5-cp39-cp39-win_amd64.whl", hash = "sha256:9976ceea0251ccad7e562e2021c337d5e9a9b24b5f9eecfe82573c2279337016"},
+]
+autorom = [
+    {file = "AutoROM-0.4.2-py3-none-any.whl", hash = "sha256:719c9d363ef08391fdb7003d70df235b68f36de628d289a946c4a59a3adefa13"},
+    {file = "AutoROM-0.4.2.tar.gz", hash = "sha256:b426a39bc0ee3781c7791f28963a9b2e4385b6421eeaf2f368edc00c761d428a"},
+]
+"autorom.accept-rom-license" = [
+    {file = "AutoROM.accept-rom-license-0.4.2.tar.gz", hash = "sha256:f08654c9d2a6837c5ec951c0364bda352510920ea0523005a2d4460c7d2be7f2"},
 ]
 cachetools = [
     {file = "cachetools-5.2.0-py3-none-any.whl", hash = "sha256:f9f17d2aec496a9aa6b76f53e3b614c965223c061982d434d160f930c698a9db"},
@@ -1109,6 +1238,11 @@ docker-pycreds = [
     {file = "docker-pycreds-0.4.0.tar.gz", hash = "sha256:6ce3270bcaf404cc4c3e27e4b6c70d3521deae82fb508767870fdbf772d584d4"},
     {file = "docker_pycreds-0.4.0-py2.py3-none-any.whl", hash = "sha256:7266112468627868005106ec19cd0d722702d2b7d5912a28e19b826c3d37af49"},
 ]
+envpool = [
+    {file = "envpool-0.6.3-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b0a758def66273fc3d0a75179f8c64a3287674507b041e8b0b9ea6dae5d5d97e"},
+    {file = "envpool-0.6.3-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:890654342f012ca40215df7fbb3bf18ea2766afc364886d59e8d3c35d27b0881"},
+    {file = "envpool-0.6.3-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:132c81a272ffefae952381dd579822774d5337f1d9afa3022cf3c87a0b9e552f"},
+]
 etils = [
     {file = "etils-0.6.0-py3-none-any.whl", hash = "sha256:e47b14402f2fc883c70a394e86b3236e4929cfd90187fba58d2f4d3eb2e07c05"},
     {file = "etils-0.6.0.tar.gz", hash = "sha256:6677241051835d0db11c4947bcad938f57b51ea102290624f892f1e4e51b70e5"},
@@ -1118,8 +1252,8 @@ filelock = [
     {file = "filelock-3.7.1.tar.gz", hash = "sha256:3a0fd85166ad9dbab54c9aec96737b744106dc5f15c0b09a6744a445299fcf04"},
 ]
 flax = [
-    {file = "flax-0.5.2-py3-none-any.whl", hash = "sha256:579bea7d6c8454782a2e0cfd210b26dbaff8afe5d4dd8e6e46c4ea4534cf2831"},
-    {file = "flax-0.5.2.tar.gz", hash = "sha256:5f07775fd4ba1926192ab6eb48c9adbd5658ddaf8585fb0c561741400d5599ff"},
+    {file = "flax-0.5.3-py3-none-any.whl", hash = "sha256:911dc4d6463ccba9808d303f44dfb4a0a6de277be8f3cbfda1471ed1a3e19374"},
+    {file = "flax-0.5.3.tar.gz", hash = "sha256:7ab7f75abc9dd7568ee86279c2e167bbd7ecbeeeac03589d93119b3321036cc0"},
 ]
 fonttools = [
     {file = "fonttools-4.34.4-py3-none-any.whl", hash = "sha256:d73f25b283cd8033367451122aa868a23de0734757a01984e4b30b18b9050c72"},
@@ -1831,6 +1965,21 @@ tensorboardx = [
     {file = "tensorboardX-2.5.1-py2.py3-none-any.whl", hash = "sha256:8808133ccca673cd04076f6f2a85cf2d39bb2d0393a0f20d0f9cbb06d472b57e"},
     {file = "tensorboardX-2.5.1.tar.gz", hash = "sha256:ea85a3446f22ce8a917fe4fa4d8a7a96222ef84ac835267d038c34bb99f6d61b"},
 ]
+tensorstore = [
+    {file = "tensorstore-0.1.21-cp310-cp310-macosx_10_14_x86_64.whl", hash = "sha256:a97c213da280f1ed7612db5211a06915c33bf3cfedb029d9f90b5c0ddfc47660"},
+    {file = "tensorstore-0.1.21-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fcd1fb20fd1a9da76aeedd1b29ebb3601191f980efd2095c5d0103b40c841ccf"},
+    {file = "tensorstore-0.1.21-cp310-cp310-win_amd64.whl", hash = "sha256:0040c51ec26313285f255a7adf6e969a3c1f80d64ef5aa2d2fca151ee6a1c71d"},
+    {file = "tensorstore-0.1.21-cp37-cp37m-macosx_10_14_x86_64.whl", hash = "sha256:e39a4c628cfbe8d30f81d476284c2605b93648dd0d1184ad3ffd1962b61825d6"},
+    {file = "tensorstore-0.1.21-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:892bb103fdde2396b5206087bd7fd13376941d2dfa254730b6ea3a080eff6546"},
+    {file = "tensorstore-0.1.21-cp37-cp37m-win_amd64.whl", hash = "sha256:6ee3890fef0b327f0f0115224f46953f8b982d21ca6a4f012e81f22aa3e915b2"},
+    {file = "tensorstore-0.1.21-cp38-cp38-macosx_10_14_x86_64.whl", hash = "sha256:52fe0ff106b9d52e55e5d695f64b7638a1e233c84fd7916644b4e75ca0c08d20"},
+    {file = "tensorstore-0.1.21-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3e048defb8ae99d80abc142ef4a380d80d3f21371bda9470a27ccbe2c7dbf281"},
+    {file = "tensorstore-0.1.21-cp38-cp38-win_amd64.whl", hash = "sha256:1df676c8fdf37b6e39294a0eca491885844fd331ba30ee95ff7f12a68bb7cdb4"},
+    {file = "tensorstore-0.1.21-cp39-cp39-macosx_10_14_x86_64.whl", hash = "sha256:0a8bc12aa3eb5a2f595022c53370c901dd7a1e7716eaa24f37495af4eb4d6829"},
+    {file = "tensorstore-0.1.21-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:56738ff1a18320e475c2b9bf16255bc5a4e9385cd3928d4d5b8a9b3842aa7b39"},
+    {file = "tensorstore-0.1.21-cp39-cp39-win_amd64.whl", hash = "sha256:cfe1a10a24a9579a83527d6bf3a8406be90313aca157f340522fd7b80ab3c35b"},
+    {file = "tensorstore-0.1.21.tar.gz", hash = "sha256:c620c3b06e1606092bd444bb7687c9d5a8049e8ed5f4c17ee0fd53e0a43b7df7"},
+]
 toml = [
     {file = "toml-0.10.2-py2.py3-none-any.whl", hash = "sha256:806143ae5bfb6a3c6e736a764057db0e6a0e05e338b5630894a5f779cabb4f9b"},
     {file = "toml-0.10.2.tar.gz", hash = "sha256:b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f"},
@@ -1843,17 +1992,25 @@ toolz = [
     {file = "toolz-0.12.0-py3-none-any.whl", hash = "sha256:2059bd4148deb1884bb0eb770a3cde70e7f954cfbbdc2285f1f2de01fd21eb6f"},
     {file = "toolz-0.12.0.tar.gz", hash = "sha256:88c570861c440ee3f2f6037c4654613228ff40c93a6c25e0eba70d17282c6194"},
 ]
+tqdm = [
+    {file = "tqdm-4.64.0-py2.py3-none-any.whl", hash = "sha256:74a2cdefe14d11442cedf3ba4e21a3b84ff9a2dbdc6cfae2c34addb2a14a5ea6"},
+    {file = "tqdm-4.64.0.tar.gz", hash = "sha256:40be55d30e200777a307a7585aee69e4eabb46b4ec6a4b4a5f2d9f11e7d5408d"},
+]
+types-protobuf = [
+    {file = "types-protobuf-3.19.22.tar.gz", hash = "sha256:d2b26861b0cb46a3c8669b0df507b7ef72e487da66d61f9f3576aa76ce028a83"},
+    {file = "types_protobuf-3.19.22-py3-none-any.whl", hash = "sha256:d291388678af91bb045fafa864f142dc4ac22f5d4cdca097c7d8d8a32fa9b3ab"},
+]
 typing-extensions = [
     {file = "typing_extensions-4.3.0-py3-none-any.whl", hash = "sha256:25642c956049920a5aa49edcdd6ab1e06d7e5d467fc00e0506c44ac86fbfca02"},
     {file = "typing_extensions-4.3.0.tar.gz", hash = "sha256:e6d2677a32f47fc7eb2795db1dd15c1f34eff616bcaf2cfb5e997f854fa1c4a6"},
 ]
 urllib3 = [
-    {file = "urllib3-1.26.10-py2.py3-none-any.whl", hash = "sha256:8298d6d56d39be0e3bc13c1c97d133f9b45d797169a0e11cdd0e0489d786f7ec"},
-    {file = "urllib3-1.26.10.tar.gz", hash = "sha256:879ba4d1e89654d9769ce13121e0f94310ea32e8d2f8cf587b77c08bbcdb30d6"},
+    {file = "urllib3-1.26.11-py2.py3-none-any.whl", hash = "sha256:c33ccba33c819596124764c23a97d25f32b28433ba0dedeb77d873a38722c9bc"},
+    {file = "urllib3-1.26.11.tar.gz", hash = "sha256:ea6e8fb210b19d950fab93b60c9009226c63a28808bc8386e05301e25883ac0a"},
 ]
 virtualenv = [
-    {file = "virtualenv-20.15.1-py2.py3-none-any.whl", hash = "sha256:b30aefac647e86af6d82bfc944c556f8f1a9c90427b2fb4e3bfbf338cb82becf"},
-    {file = "virtualenv-20.15.1.tar.gz", hash = "sha256:288171134a2ff3bfb1a2f54f119e77cd1b81c29fc1265a2356f3e8d14c7d58c4"},
+    {file = "virtualenv-20.16.0-py2.py3-none-any.whl", hash = "sha256:2202dbc33c4f9aaa13289d244d64f2ade8b0169e88d0213b505099b384c5ae04"},
+    {file = "virtualenv-20.16.0.tar.gz", hash = "sha256:6cfedd21e7584124a1d1e8f3b6e74c0bf8aeea44d9884b6d2d7241de5361a73c"},
 ]
 wandb = [
     {file = "wandb-0.12.21-py2.py3-none-any.whl", hash = "sha256:150842447d355d90dc7f368b824951a625e5b2d1be355a00e99b11b73728bc1f"},
