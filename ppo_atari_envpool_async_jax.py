@@ -253,27 +253,56 @@ if __name__ == "__main__":
         return logprob, entropy, value
 
     revert_idx_fn = jax.vmap(lambda src, target, idxs: target.at[idxs].set(src)) # TODO: docs to explain this
+
+    # modifed from https://github.com/sail-sg/envpool/blob/1eedd34902507011dc17f8ab6ca956a3d47431d7/examples/ppo_atari/gae.py#L23
     @jax.jit
     def compute_gae(
+        env_ids: np.ndarray,
         rewards: np.ndarray,
         values: np.ndarray,
         dones: np.ndarray,
     ):
-        next_value = values[-1]
-        next_done = dones[-1]
-        advantages = jnp.zeros((args.num_steps, args.num_envs))
-        lastgaelam = 0
-        for t in reversed(range(args.num_steps)):
-            if t == args.num_steps - 1:
-                nextnonterminal = 1.0 - next_done
-                nextvalues = next_value
-            else:
-                nextnonterminal = 1.0 - dones[t + 1]
-                nextvalues = values[t + 1]
-            delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-            lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            advantages = advantages.at[t].set(lastgaelam)
-        return advantages, advantages + values[:-1]
+        env_ids = jnp.asarray(env_ids)
+        rewards = jnp.asarray(rewards)
+        values = jnp.asarray(values)
+        dones = jnp.asarray(dones)
+        T, B = env_ids.shape
+
+        final_env_id_checked = jnp.zeros(args.num_envs, jnp.int32) - 1
+        final_env_ids = jnp.zeros_like(dones, jnp.int32)
+
+        mask = (1.0 - dones) * (args.gamma * args.gae_lambda)
+        index_tp1 = jnp.zeros(args.num_envs, jnp.int32) - 1
+        value_tp1 = jnp.zeros(args.num_envs)
+        gae_tp1 = jnp.zeros(args.num_envs)
+        delta = rewards - values
+        adv = jnp.zeros((T, B))
+        for t in reversed(range(T)):
+            eid = env_ids[t]
+            final_env_ids = final_env_ids.at[t].set(jnp.where(final_env_id_checked[eid] == 1, 1, final_env_ids[t]))
+            final_env_id_checked = final_env_id_checked.at[eid].set(jnp.where(final_env_id_checked[eid] == -1, 1, final_env_id_checked[eid]))
+
+            
+            adv = adv.at[t].set(delta[t] + args.gamma * value_tp1[eid] * (1 - dones[t]) \
+                + mask[t] * gae_tp1[eid])
+            mask = mask.at[t].set(dones[t] | (index_tp1[eid] != -1))
+            gae_tp1 = gae_tp1.at[eid].set(adv[t])
+            value_tp1 = value_tp1.at[eid].set(values[t])
+            index_tp1 = index_tp1.at[eid].set(t)
+
+        # advantages = jnp.zeros((args.num_steps, args.num_envs))
+        # lastgaelam = 0
+        # for t in reversed(range(args.num_steps)):
+        #     if t == args.num_steps - 1:
+        #         nextnonterminal = 1.0 - next_done
+        #         nextvalues = next_value
+        #     else:
+        #         nextnonterminal = 1.0 - dones[t + 1]
+        #         nextvalues = values[t + 1]
+        #     delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+        #     lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+        #     advantages = advantages.at[t].set(lastgaelam)
+        return adv + value, adv, mask, final_env_id_checked, final_env_ids
 
     @jax.jit
     def update_ppo(
@@ -287,23 +316,19 @@ if __name__ == "__main__":
         rewards,
         key: jax.random.PRNGKey,
     ):
-        env_ids = jnp.asarray(env_ids).reshape(args.num_steps + 1, -1)
-        obs = jnp.asarray(obs).reshape((args.num_steps + 1, -1,)+ envs.single_observation_space.shape)
-        dones = jnp.asarray(dones).reshape(args.num_steps + 1, -1)
-        values = jnp.asarray(values).reshape(args.num_steps + 1, -1)
-        actions = jnp.asarray(actions).reshape(args.num_steps + 1, -1)
-        logprobs =jnp.asarray(logprobs).reshape(args.num_steps + 1, -1)
-        rewards = jnp.asarray(rewards).reshape(args.num_steps + 1, -1)
+        obs = jnp.asarray(obs)
+        dones = jnp.asarray(dones)
+        values = jnp.asarray(values)
+        actions = jnp.asarray(actions)
+        logprobs = jnp.asarray(logprobs)
+        env_ids = jnp.asarray(env_ids)
+        rewards = jnp.asarray(rewards)
+        advantages, returns, _, _, final_env_ids = compute_gae(env_ids, rewards, values, dones)
+        b_inds = jnp.nonzero(final_env_ids.reshape(-1), size=(args.num_steps) * async_update * args.async_batch_size)[0]
 
-
-        rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)
-        values = revert_idx_fn(values, jnp.zeros_like(values), env_ids)
-        dones = revert_idx_fn(dones, jnp.zeros_like(dones), env_ids)
-        advantages, returns = compute_gae(rewards, values, dones)
-
-        b_obs = revert_idx_fn(obs, jnp.zeros_like(obs), env_ids)[:-1].reshape((-1,) + envs.single_observation_space.shape)
-        b_logprobs = revert_idx_fn(logprobs, jnp.zeros_like(logprobs), env_ids)[:-1].reshape(-1)
-        b_actions = revert_idx_fn(actions, jnp.zeros_like(actions), env_ids)[:-1].reshape((-1,) + envs.single_action_space.shape)
+        b_obs = obs.reshape((-1,)+ envs.single_observation_space.shape)
+        b_actions = actions.reshape(-1)
+        b_logprobs = logprobs.reshape(-1)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
 
@@ -333,7 +358,7 @@ if __name__ == "__main__":
         # clipfracs = []
         for _ in range(args.update_epochs):
             key, subkey = jax.random.split(key)
-            b_inds = jax.random.permutation(subkey, args.batch_size, independent=True)
+            b_inds = jax.random.permutation(subkey, b_inds, independent=True)
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
@@ -346,7 +371,7 @@ if __name__ == "__main__":
                     b_returns[mb_inds],
                 )
                 agent_state = agent_state.apply_gradients(grads=grads)
-        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key
+        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, key
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -354,6 +379,7 @@ if __name__ == "__main__":
     async_update = int((args.num_envs / args.async_batch_size))
 
     # put data in the last index
+    N = (args.num_steps + 1) * async_update * args.async_batch_size
     episode_returns = np.zeros((args.num_envs,), dtype=np.float32)
     returned_episode_returns = np.zeros((args.num_envs,), dtype=np.float32)
     episode_lengths = np.zeros((args.num_envs,), dtype=np.float32)
@@ -418,19 +444,24 @@ if __name__ == "__main__":
             returned_episode_lengths[env_id] = np.where(info["terminated"], episode_lengths[env_id], returned_episode_lengths[env_id])
             episode_lengths[env_id] *= (1 - info["terminated"])
         avg_episodic_return = np.mean(returned_episode_returns)
-        print(returned_episode_returns)
+        # print(returned_episode_returns)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
         writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
-        if np.asarray(env_ids).reshape(args.num_steps + 1, -1).sum(1).mean() != 28.0:
-            print("env_ids inconsistent?")
-            print(np.asarray(env_ids).reshape(args.num_steps + 1, -1).sum(1))
-            # save to csv
-            import pandas as pd 
-            env_id_df = pd.DataFrame(np.asarray(env_ids).reshape(args.num_steps + 1, -1))
-            env_id_df["sum"] = env_id_df.sum(1)
-            env_id_df.to_markdown("foo.md")
-            raise
-        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
+        # if np.asarray(env_ids).reshape(args.num_steps + 1, -1).sum(1).mean() != 28.0:
+        #     print("env_ids inconsistent?")
+        #     print(np.asarray(env_ids).reshape(args.num_steps + 1, -1).sum(1))
+            # # save to csv
+            # import pandas as pd 
+            # env_id_df = pd.DataFrame(np.asarray(env_ids).reshape(args.num_steps + 1, -1))
+            # env_id_df["sum"] = env_id_df.sum(1)
+            # env_id_df.to_markdown("foo.md")
+            # raise
+
+        # count env steps
+        # np.unique(np.asarray(env_ids).reshape(args.num_steps + 1, -1), return_counts=True)
+        
+        # advantages, returns, mask, final_env_id_checked, final_env_ids = compute_gae(env_ids, rewards, values, dones)
+        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, key = update_ppo(
             agent_state,
             obs,
             dones,
@@ -444,8 +475,8 @@ if __name__ == "__main__":
         # print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
         # print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
         # print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
-        # writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
-        # writer.add_scalar("stats/returns", returns.mean().item(), global_step)
+        writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
+        writer.add_scalar("stats/returns", returns.mean().item(), global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", agent_state.opt_state[1].hyperparams["learning_rate"].item(), global_step)
