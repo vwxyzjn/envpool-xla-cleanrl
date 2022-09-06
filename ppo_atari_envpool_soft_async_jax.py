@@ -21,6 +21,7 @@ import numpy as np
 import optax
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from flax.training import checkpoints
 from tensorboardX import SummaryWriter
 
 
@@ -135,6 +136,9 @@ class SoftAsyncEnv:
         next_obs, next_reward, next_done, info = self.envs[self.envpool_idx].recv()
         info["env_id"] += self.batch_size * self.envpool_idx
         return next_obs, next_reward, next_done, info
+
+    def close(self):
+        pass
 
 class Network(nn.Module):
     @nn.compact
@@ -306,7 +310,7 @@ if __name__ == "__main__":
         values: np.ndarray,
         dones: np.ndarray,
     ):
-        next_value = values[-1]
+        next_value = values[-1] # TODO: is the values off by 1?
         next_done = dones[-1]
         advantages = jnp.zeros((args.num_steps, args.num_envs))
         lastgaelam = 0
@@ -393,7 +397,7 @@ if __name__ == "__main__":
                     b_returns[mb_inds],
                 )
                 agent_state = agent_state.apply_gradients(grads=grads)
-        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key
+        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, key
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -403,6 +407,8 @@ if __name__ == "__main__":
     # put data in the last index
     episode_returns = np.zeros((args.num_envs,), dtype=np.float32)
     returned_episode_returns = np.zeros((args.num_envs,), dtype=np.float32)
+    episode_lengths = np.zeros((args.num_envs,), dtype=np.float32)
+    returned_episode_lengths = np.zeros((args.num_envs,), dtype=np.float32)
     obs = []
     dones = []
     actions = []
@@ -431,16 +437,16 @@ if __name__ == "__main__":
         obs = obs[-async_update:]
         dones = dones[-async_update:]
         actions = actions[-async_update:]
-        logprobs = []
-        values = []
+        logprobs = logprobs[-async_update:]
+        values = values[-async_update:]
         # NOTE: This is a major difference from the synced version:
         # this script cannot re-sample actions based on the last observation in the last rollout phase
         # because the actions were already sampled in the last rollout phase per envpool's async API,
         # so we can only update the logprobs and values based on the updated policy.
-        for o, a in zip(obs, actions):
-            l, _, v = get_action_and_value2(agent_state.params, o, a)
-            logprobs.append(l)
-            values.append(v)
+        # for o, a in zip(obs, actions):
+        #     l, _, v = get_action_and_value2(agent_state.params, o, a)
+        #     logprobs.append(l)
+        #     values.append(v)
         env_ids = env_ids[-async_update:]
         rewards = rewards[-async_update:]
         for step in range(async_update, (args.num_steps + 1) * async_update): # num_steps + 1 to get the states for value bootstrapping.
@@ -457,14 +463,21 @@ if __name__ == "__main__":
             env_ids.append(env_id)
             rewards.append(next_reward)
             episode_returns[env_id] += info["reward"]
-            returned_episode_returns[env_id] = np.where(info["terminated"], episode_returns[env_id], returned_episode_returns[env_id])
-            episode_returns[env_id] *= (1 - info["terminated"])
+            returned_episode_returns[env_id] = np.where(info["terminated"] + info["TimeLimit.truncated"], episode_returns[env_id], returned_episode_returns[env_id])
+            episode_returns[env_id] *= (1 - info["terminated"]) * (1 - info["TimeLimit.truncated"])
+            episode_lengths[env_id] += 1
+            returned_episode_lengths[env_id] = np.where(info["terminated"] + info["TimeLimit.truncated"], episode_lengths[env_id], returned_episode_lengths[env_id])
+            episode_lengths[env_id] *= (1 - info["terminated"]) * (1 - info["TimeLimit.truncated"])
+            if np.array(info["TimeLimit.truncated"]).sum() > 0:
+                print("truncated!!!!")
         avg_episodic_return = np.mean(returned_episode_returns)
-        print(returned_episode_returns)
+        print(np.array(dones).sum(), returned_episode_returns, returned_episode_lengths)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
+        writer.add_scalar("stats/dones", np.array(dones).sum(), global_step)
         writer.add_scalar("charts/avg_episodic_return", avg_episodic_return, global_step)
+        writer.add_scalar("charts/avg_episodic_length", np.mean(returned_episode_lengths), global_step)
 
-        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
+        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, key = update_ppo(
             agent_state,
             obs,
             dones,
@@ -479,8 +492,8 @@ if __name__ == "__main__":
         # print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
         # print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
         # print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
-        # writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
-        # writer.add_scalar("stats/returns", returns.mean().item(), global_step)
+        writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
+        writer.add_scalar("stats/returns", returns.mean().item(), global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", agent_state.opt_state[1].hyperparams["learning_rate"].item(), global_step)
@@ -495,6 +508,8 @@ if __name__ == "__main__":
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         writer.add_scalar("charts/SPS_update", int(args.num_envs * args.num_steps / (time.time() - update_time_start)), global_step)
 
-
+    checkpoints.save_checkpoint(ckpt_dir=f'ckpts/{run_name}', target=agent_state, step=0)
+    if args.track:
+        wandb.save(f'ckpts/{run_name}/*', base_path=f'ckpts/{run_name}')
     envs.close()
     writer.close()
