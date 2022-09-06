@@ -347,7 +347,7 @@ if __name__ == "__main__":
         rewards = jnp.asarray(rewards).reshape(args.num_steps + 1, -1)
 
 
-        rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)
+        rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)[1:]
         values = revert_idx_fn(values, jnp.zeros_like(values), env_ids)
         dones = revert_idx_fn(dones, jnp.zeros_like(dones), env_ids)
         advantages, returns = compute_gae(rewards, values, dones)
