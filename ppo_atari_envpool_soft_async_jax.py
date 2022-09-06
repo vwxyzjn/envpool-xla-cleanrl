@@ -346,7 +346,8 @@ if __name__ == "__main__":
         logprobs =jnp.asarray(logprobs).reshape(args.num_steps + 1, -1)
         rewards = jnp.asarray(rewards).reshape(args.num_steps + 1, -1)
 
-
+        # rewards are off by one in openai/gym's API
+        # see https://twitter.com/vwxyzjn/status/1566988180875878401
         rewards = revert_idx_fn(rewards, jnp.zeros_like(rewards), env_ids)[1:]
         values = revert_idx_fn(values, jnp.zeros_like(values), env_ids)
         dones = revert_idx_fn(dones, jnp.zeros_like(dones), env_ids)
