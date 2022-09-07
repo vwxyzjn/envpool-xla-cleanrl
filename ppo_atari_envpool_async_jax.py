@@ -272,7 +272,7 @@ if __name__ == "__main__":
         lastdones = jnp.zeros(args.num_envs) + 1
         lastvalues = jnp.zeros(args.num_envs)
 
-        # TODO: rewards off by one?
+        # TODO: the rewards have different shape — is this going to be an issue?
         for t in reversed(range(T)):
             eid = env_ids[t]
             nextnonterminal = 1.0 - lastdones[eid]
@@ -307,7 +307,6 @@ if __name__ == "__main__":
         logprobs = jnp.asarray(logprobs)
         env_ids = jnp.asarray(env_ids)
         rewards = jnp.asarray(rewards)
-        advantages, returns, _, final_env_ids = compute_gae(env_ids, rewards, values, dones)
 
         T, B = env_ids.shape
         index_ranges = jnp.arange(T * B, dtype=jnp.int32)
@@ -319,8 +318,12 @@ if __name__ == "__main__":
             )
             last_env_ids = last_env_ids.at[env_id].set(index_range)
 
+        # rewards is off by one time step
+        rewards = rewards.reshape(-1)[next_index_ranges].reshape((args.num_steps + 1) * async_update, args.async_batch_size)
+        advantages, returns, _, final_env_ids = compute_gae(env_ids, rewards, values, dones)
+
         b_inds = jnp.nonzero(final_env_ids.reshape(-1), size=(args.num_steps) * async_update * args.async_batch_size)[0]
-        next_b_inds = next_index_ranges[b_inds]
+        next_b_inds = next_index_ranges[b_inds] # TODO: this is not needed
 
         b_obs = obs.reshape((-1,)+ envs.single_observation_space.shape)
         b_actions = actions.reshape(-1)
@@ -364,9 +367,9 @@ if __name__ == "__main__":
                 mb_inds = shuffled_b_inds[start:end]
                 (loss, (pg_loss, v_loss, entropy_loss, approx_kl)), grads = ppo_loss_grad_fn(
                     agent_state.params,
-                    b_obs[next_index_ranges[mb_inds]],
-                    b_actions[next_index_ranges[mb_inds]],
-                    b_logprobs[next_index_ranges[mb_inds]],
+                    b_obs[mb_inds],
+                    b_actions[mb_inds],
+                    b_logprobs[mb_inds],
                     b_advantages[mb_inds],
                     b_returns[mb_inds],
                 )
