@@ -260,10 +260,6 @@ if __name__ == "__main__":
         values: np.ndarray,
         dones: np.ndarray,
     ):
-        env_ids = jnp.asarray(env_ids)
-        rewards = jnp.asarray(rewards)
-        values = jnp.asarray(values)
-        dones = jnp.asarray(dones)
         T, B = env_ids.shape
         final_env_id_checked = jnp.zeros(args.num_envs, jnp.int32) - 1
         final_env_ids = jnp.zeros_like(dones, jnp.int32)
@@ -308,6 +304,7 @@ if __name__ == "__main__":
         env_ids = jnp.asarray(env_ids)
         rewards = jnp.asarray(rewards)
 
+        # TODO: in an unlikely event, one of the envs might have not stepped at all, which may results in unexpected behavior
         T, B = env_ids.shape
         index_ranges = jnp.arange(T * B, dtype=jnp.int32)
         next_index_ranges = jnp.zeros_like(index_ranges, dtype=jnp.int32)
@@ -319,21 +316,14 @@ if __name__ == "__main__":
             last_env_ids = last_env_ids.at[env_id].set(index_range)
 
         # rewards is off by one time step
-        rewards = rewards.reshape(-1)[next_index_ranges].reshape((args.num_steps + 1) * async_update, args.async_batch_size)
+        rewards = rewards.reshape(-1)[next_index_ranges].reshape((args.num_steps) * async_update, args.async_batch_size)
         advantages, returns, _, final_env_ids = compute_gae(env_ids, rewards, values, dones)
-
         b_inds = jnp.nonzero(final_env_ids.reshape(-1), size=(args.num_steps) * async_update * args.async_batch_size)[0]
-        next_b_inds = next_index_ranges[b_inds] # TODO: this is not needed
-
         b_obs = obs.reshape((-1,)+ envs.single_observation_space.shape)
         b_actions = actions.reshape(-1)
         b_logprobs = logprobs.reshape(-1)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
-        b_dones = dones.reshape(-1)
-        b_env_ids = env_ids.reshape(-1)
-        b_values = values.reshape(-1)
-        b_rewards = rewards.reshape(-1)
 
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
@@ -374,7 +364,7 @@ if __name__ == "__main__":
                     b_returns[mb_inds],
                 )
                 agent_state = agent_state.apply_gradients(grads=grads)
-        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, b_inds, next_b_inds, final_env_ids, b_obs, b_dones, b_values, b_actions, b_logprobs, b_env_ids, b_rewards, key
+        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, b_inds, final_env_ids, key
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -394,7 +384,7 @@ if __name__ == "__main__":
     env_ids = []
     rewards = []
     envs.async_reset()
-    final_env_ids = jnp.zeros((args.num_envs,), dtype=jnp.int32) # TODO: check if this dummy value is correct
+    final_env_ids = np.zeros((async_update, args.async_batch_size), dtype=np.int32) # TODO: issue: there is no guarantee that the first two batch contain all the envs
     for _ in range(async_update):
         next_obs, next_reward, next_done, info = envs.recv()
         global_step += len(next_done)
@@ -409,10 +399,8 @@ if __name__ == "__main__":
         env_ids.append(env_id)
         rewards.append(next_reward)
 
-    j_obs, j_dones, j_values, j_actions, j_logprobs, j_env_ids, j_rewards = jnp.asarray(obs).reshape((-1,)+ envs.single_observation_space.shape), jnp.asarray(dones).reshape(-1), jnp.asarray(values).reshape(-1), jnp.asarray(actions).reshape(-1), jnp.asarray(logprobs).reshape(-1), jnp.asarray(env_ids).reshape(-1), jnp.asarray(rewards).reshape(-1)
     for update in range(1, args.num_updates + 2):
-        # roll over data from last rollout phase.
-        final_env_idxs = jnp.nonzero(final_env_ids.reshape(-1)-1, size=(args.num_envs))[0]
+        update_time_start = time.time()
         obs = []
         dones = []
         actions = []
@@ -420,25 +408,32 @@ if __name__ == "__main__":
         values = []
         env_ids = []
         rewards = []
-        for i in range(async_update):
-            obs += [j_obs[final_env_idxs[0:args.async_batch_size]]]
-            dones += [j_dones[final_env_idxs[0:args.async_batch_size]]]
-            # NOTE: This is a major difference from the synced version:
-            # this script cannot re-sample actions based on the last observation in the last rollout phase
-            # because the actions were already sampled in the last rollout phase per envpool's async API,
-            # so we can only use the `actions`, `logprobs` and `values` based on the last policy.
-            actions += [j_actions[final_env_idxs[0:args.async_batch_size]]]
-            logprobs += [j_logprobs[final_env_idxs[0:args.async_batch_size]]]
-            values += [j_values[final_env_idxs[0:args.async_batch_size]]]
-            env_ids += [j_env_ids[final_env_idxs[0:args.async_batch_size]]]
-            rewards += [j_rewards[final_env_idxs[0:args.async_batch_size]]]
+        env_recv_time = 0
+        inference_time = 0
+        storage_time = 0
+        env_send_time = 0
 
-        for step in range(async_update, (args.num_steps + 1) * async_update): # num_steps + 1 to get the states for value bootstrapping.
+        # NOTE: This is a major difference from the sync version:
+        # at the end of the rollout phase, the sync version will have the next observation
+        # ready for the value bootstrap, but the async version will not have it.
+        # for this reason we do `num_steps + 1`` to get the extra states for value bootstrapping.
+        # but note that the extra states are not used for the loss computation in the next iteration,
+        # while the sync version will use the extra state for the loss computation.
+        for step in range(async_update, (args.num_steps + 1) * async_update): # 
+            env_recv_time_start = time.time()
             next_obs, next_reward, next_done, info = envs.recv()
+            env_recv_time += time.time() - env_recv_time_start
             global_step += len(next_done)
             env_id = info["env_id"]
+
+            inference_time_start = time.time()
             action, logprob, value, key = get_action_and_value(agent_state, next_obs, key)
+            inference_time += time.time() - inference_time_start
+
+            env_send_time_start = time.time()
             envs.send(np.array(action), env_id)
+            env_send_time += time.time() - env_send_time_start
+            storage_time_start = time.time()
             obs.append(next_obs)
             dones.append(next_done)
             values.append(value)
@@ -449,10 +444,11 @@ if __name__ == "__main__":
             episode_returns[env_id] += info["reward"]
             returned_episode_returns[env_id] = np.where(info["terminated"], episode_returns[env_id], returned_episode_returns[env_id])
             episode_returns[env_id] *= (1 - info["terminated"])
-
             episode_lengths[env_id] += 1
             returned_episode_lengths[env_id] = np.where(info["terminated"], episode_lengths[env_id], returned_episode_lengths[env_id])
             episode_lengths[env_id] *= (1 - info["terminated"])
+            storage_time += time.time() - storage_time_start
+
         avg_episodic_return = np.mean(returned_episode_returns)
         # print(returned_episode_returns)
         print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
@@ -462,7 +458,8 @@ if __name__ == "__main__":
         # np.unique(np.asarray(env_ids).reshape(args.num_steps + 1, -1), return_counts=True)
         
         # advantages, returns, final_env_id_checked, final_env_ids = compute_gae(env_ids, rewards, values, dones)
-        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, b_inds, next_b_inds, final_env_ids, j_obs, j_dones, j_values, j_actions, j_logprobs, j_env_ids, j_rewards, key = update_ppo(
+        training_time_start = time.time()
+        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, advantages, returns, b_inds, final_env_ids, key = update_ppo(
             agent_state,
             obs,
             dones,
@@ -473,9 +470,7 @@ if __name__ == "__main__":
             rewards,
             key,
         )
-        # print("network_params", agent_state.params.network_params["params"]["Dense_0"]["kernel"].sum())
-        # print("actor_params", agent_state.params.actor_params["params"]["Dense_0"]["kernel"].sum())
-        # print("critic_params", agent_state.params.critic_params["params"]["Dense_0"]["kernel"].sum())
+        writer.add_scalar("stats/training_time", time.time() - training_time_start, global_step)
         writer.add_scalar("stats/advantages", advantages.mean().item(), global_step)
         writer.add_scalar("stats/returns", returns.mean().item(), global_step)
 
@@ -484,12 +479,16 @@ if __name__ == "__main__":
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        # writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        # writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/loss", loss.item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        writer.add_scalar("charts/SPS_update", int(args.num_envs * args.num_steps / (time.time() - update_time_start)), global_step)
+        writer.add_scalar("stats/env_recv_time", env_recv_time, global_step)
+        writer.add_scalar("stats/inference_time", inference_time, global_step)
+        writer.add_scalar("stats/storage_time", storage_time, global_step)
+        writer.add_scalar("stats/env_send_time", env_send_time, global_step)
+        writer.add_scalar("stats/update_time", time.time() - update_time_start, global_step)
 
 
     envs.close()
