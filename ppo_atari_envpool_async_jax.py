@@ -419,7 +419,7 @@ if __name__ == "__main__":
         # for this reason we do `num_steps + 1`` to get the extra states for value bootstrapping.
         # but note that the extra states are not used for the loss computation in the next iteration,
         # while the sync version will use the extra state for the loss computation.
-        for step in range(async_update, (args.num_steps + 1) * async_update): # 
+        for step in range(async_update, (args.num_steps + 1) * async_update): # num_steps + 1 to get the states for value bootstrapping.
             env_recv_time_start = time.time()
             next_obs, next_reward, next_done, info = envs.recv()
             env_recv_time += time.time() - env_recv_time_start
@@ -489,7 +489,6 @@ if __name__ == "__main__":
         writer.add_scalar("stats/storage_time", storage_time, global_step)
         writer.add_scalar("stats/env_send_time", env_send_time, global_step)
         writer.add_scalar("stats/update_time", time.time() - update_time_start, global_step)
-
 
     envs.close()
     writer.close()
